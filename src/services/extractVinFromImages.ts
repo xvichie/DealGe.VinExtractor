@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { isValidVin, isValidVinChecksum } from "../utils/vinValidator";
-import { findVinCandidateImages } from "./findVinCandidateImages";
+import { findVinCandidateImages } from "./findVinCandidateImages2";
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY!,

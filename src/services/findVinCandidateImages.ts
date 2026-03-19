@@ -1,6 +1,7 @@
 import Tesseract from "tesseract.js";
 import axios from "axios";
 import sharp from "sharp";
+import { Profiler } from "../utils/profiler";
 
 // VIN pattern
 const VIN_REGEX = /\b[A-HJ-NPR-Z0-9]{17}\b/i;
@@ -145,39 +146,69 @@ export async function findVinCandidateImages(
   images: string[]
 ): Promise<number[]> {
 
+  const profiler = new Profiler("VIN Candidate Finder (SEQUENTIAL)");
+
   if (!images.length) return [];
 
-  const worker = await Tesseract.createWorker("eng");
+  // 🧠 Worker init
+  const worker = await profiler.measure("worker.create", () =>
+    Tesseract.createWorker("eng")
+  );
 
-  await worker.setParameters({
-    tessedit_char_whitelist: "ABCDEFGHJKLMNPRSTUVWXYZ0123456789",
-  });
+  await profiler.measure("worker.setParameters", () =>
+    worker.setParameters({
+      tessedit_char_whitelist: "ABCDEFGHJKLMNPRSTUVWXYZ0123456789",
+    })
+  );
 
   const results: { index: number; score: number }[] = [];
 
+  // 🔥 LOOP
   for (let i = 0; i < images.length; i++) {
-    try {
-      const raw = await fetchImageAsBuffer(images[i]);
 
-      const text = await ocrImage(worker, raw);
+    await profiler.measure(`image ${i} TOTAL`, async () => {
 
-      const score = scoreOcrText(text);
+      try {
 
-      if (score > 0) {
-        results.push({ index: i, score });
+        const raw = await profiler.measure(
+          `image ${i} → fetch`,
+          () => fetchImageAsBuffer(images[i])
+        );
+
+        const text = await profiler.measure(
+          `image ${i} → OCR`,
+          () => ocrImage(worker, raw)
+        );
+
+        const score = scoreOcrText(text);
+
+        if (score > 0) {
+          results.push({ index: i, score });
+        }
+
+        // 🔥 early exit
+        if (score >= 100) {
+          console.log(`✅ VIN FOUND at image ${i}, stopping early`);
+          return;
+        }
+
+      } catch (err) {
+        console.log("❌ OCR error on image", i);
       }
 
-      // 🔥 stop early if strong VIN found
-      if (score >= 100) {
-        break;
-      }
+    });
 
-    } catch (err) {
-      console.log("OCR error on image", i);
+    // 🔥 break OUTSIDE measure (important)
+    if (results.some(r => r.score >= 100)) {
+      break;
     }
   }
 
-  await worker.terminate();
+  await profiler.measure("worker.terminate", () =>
+    worker.terminate()
+  );
+
+  profiler.end();
 
   return results
     .sort((a, b) => b.score - a.score)
